@@ -58,9 +58,18 @@ def error_screen(text):
     surf = pygame.display.get_surface()
     if surf is None:
         try:
-            surf = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+            surf = pygame.display.set_mode((1200, 720), pygame.SCALED | pygame.FULLSCREEN)
         except Exception:
             surf = pygame.display.set_mode((1200, 720))
+    try:
+        from naumaxia import hide_android_splash
+        hide_android_splash()
+    except Exception:
+        try:
+            from android import loadingscreen
+            loadingscreen.hide_loading_screen()
+        except Exception:
+            pass
     w, h = surf.get_size()
     size = max(14, h // 40)
     font = None

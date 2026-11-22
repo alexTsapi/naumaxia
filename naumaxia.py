@@ -79,6 +79,30 @@ FIRE_COLS = [(255, 220, 90), (255, 150, 40), (235, 70, 40)]
 
 MOUSE = (0, 0)   # θέση ποντικιού σε εικονικές συντεταγμένες
 IS_ANDROID = "ANDROID_ARGUMENT" in os.environ or hasattr(sys, "getandroidapilevel")
+
+
+def android_display(size):
+    """Οθόνη για tablet: η κλιμάκωση γίνεται από την κάρτα γραφικών (SCALED),
+    που στο Android είναι πιο αξιόπιστο από το set_mode((0, 0))."""
+    try:
+        return pygame.display.set_mode(size, pygame.SCALED | pygame.FULLSCREEN)
+    except pygame.error:
+        return pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+
+
+def hide_android_splash():
+    """Βγάζει την εικόνα εκκίνησης του Android (αλλιώς μένει από πάνω και φαίνεται μαύρο)."""
+    if not IS_ANDROID:
+        return
+    try:
+        from android import loadingscreen
+        loadingscreen.hide_loading_screen()
+    except Exception:
+        try:
+            from jnius import autoclass
+            autoclass("org.kivy.android.PythonActivity").mActivity.removeLoadingScreen()
+        except Exception:
+            pass
 TOUCH = IS_ANDROID   # σε tablet: πρώτο πάτημα = σημάδι, δεύτερο = φωτιά
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -482,9 +506,10 @@ class LP:
 
 
 class Sounds:
-    def __init__(self):
+    def __init__(self, progress=None):
         self.on = True
         self.s = {}
+        self.progress = progress
         try:
             if pygame.mixer.get_init():
                 pygame.mixer.set_num_channels(32)
@@ -540,8 +565,12 @@ class Sounds:
                 a.append(s)
                 if chs == 2:
                     a.append(s)
+            done[0] += 1
+            if self.progress:
+                self.progress(done[0], 11)
             return pygame.mixer.Sound(buffer=a.tobytes())
 
+        done = [0]
         S = {}
 
         # κανόνι: βαθύ "μπουμ" με κρότο και αντήχηση
@@ -844,7 +873,7 @@ class Game:
         pygame.mixer.pre_init(22050, -16, 2, 1024 if IS_ANDROID else 512)
         pygame.init()
         if IS_ANDROID:
-            pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+            android_display((W, H))
             self.win_size = pygame.display.get_surface().get_size()
             self.fullscreen = True
             pygame.key.stop_text_input()   # το πληκτρολόγιο ανοίγει μόνο όταν χρειάζεται
@@ -871,12 +900,9 @@ class Game:
         self.f_tiny = make_font(13)
 
         # οθόνη φόρτωσης όσο φτιάχνονται οι ήχοι
-        self.screen.fill(BG)
-        t = self.f_big.render("Φόρτωση ήχων…", True, TEXT)
-        self.screen.blit(t, t.get_rect(center=(W // 2, H // 2)))
-        self.present()
-        pygame.event.pump()
-        self.snd = Sounds()
+        self.loading("Φόρτωση…", 0)
+        hide_android_splash()
+        self.snd = Sounds(progress=lambda k, n: self.loading("Φόρτωση ήχων…", k / n))
 
         self.cfg = load_config()
         self.name = self.cfg.get("name", "Παίκτης")
@@ -916,6 +942,17 @@ class Game:
         self.reset_round()
 
     # ------------------------------------------------ παράθυρο / κλιμάκωση
+    def loading(self, text, frac):
+        self.screen.fill(BG)
+        self.text(text, self.f_big, TEXT, center=(W // 2, H // 2 - 20))
+        bar = pygame.Rect(W // 2 - 200, H // 2 + 25, 400, 16)
+        pygame.draw.rect(self.screen, PANEL_EDGE, bar, 2, border_radius=8)
+        if frac > 0:
+            pygame.draw.rect(self.screen, ACCENT, (bar.x + 3, bar.y + 3, int((bar.w - 6) * min(1, frac)), bar.h - 6),
+                             border_radius=6)
+        self.present()
+        pygame.event.pump()
+
     def present(self):
         win = pygame.display.get_surface()
         ww, wh = win.get_size()
