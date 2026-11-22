@@ -1,0 +1,98 @@
+# Φτιάχνει αυτόματα το APK για Android κάθε φορά που ανεβαίνει αλλαγή στο main.
+# Το έτοιμο APK μπαίνει στα "Releases" του repo, για να το κατεβάσεις από το tablet.
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Εγκατάσταση εργαλείων
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git zip unzip autoconf automake libtool libltdl-dev pkg-config \
+            zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
+          python -m pip install --upgrade pip
+          pip install buildozer "cython>=3.0,<3.2" setuptools
+
+      - name: Γραμματοσειρές με ελληνικά (μπαίνουν αυτόματα στο APK)
+        run: |
+          sudo apt-get install -y fonts-dejavu-core
+          mkdir -p fonts
+          cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf fonts/
+
+      - name: Cache Buildozer (για γρηγορότερα επόμενα builds)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            .buildozer
+          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec', 'recipes/**') }}
+
+      - name: Build APK
+        run: |
+          yes | buildozer -v android debug 2>&1 | tee build.log
+          exit ${PIPESTATUS[1]}
+
+      # Αν αποτύχει: βγάζει το πραγματικό λάθος στη σελίδα του run (Annotations)
+      # και ανεβάζει όλο το log, για να μη ψάχνουμε 27.000 γραμμές.
+      - name: Δείξε το λάθος (μόνο αν αποτύχει)
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import re
+          lines = open("build.log", encoding="utf-8", errors="replace").read().splitlines()
+          lines = [re.sub(r"\x1b\[[0-9;]*m", "", l) for l in lines]
+          end = next((i for i, l in enumerate(lines) if "# Command failed" in l), len(lines))
+          chunk = [l for l in lines[max(0, end - 60):end] if l.strip()][-45:]
+          msg = "%0A".join(l.replace("%", "%25")[:300] for l in chunk)
+          print("::error title=Buildozer error::" + msg)
+          hits = [l for l in lines[:end] if re.search(r"(error:|Error:|Traceback|FAILED|No such file|not found)", l)]
+          for h in hits[-8:]:
+              print("::error title=Γραμμή με λάθος::" + h.replace("%", "%25")[:600])
+          PY
+
+      - name: Ανέβασμα log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+
+      - name: Όνομα αρχείου
+        run: |
+          mkdir -p out
+          cp bin/*.apk out/Naumaxia-v1.${{ github.run_number }}.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Naumaxia-APK
+          path: out/*.apk
+
+      - name: Δημοσίευση στα Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.${{ github.run_number }}
+          name: Ναυμαχία v1.${{ github.run_number }}
+          body: |
+            Άνοιξε αυτή τη σελίδα από το tablet, πάτα το αρχείο .apk και εγκατέστησέ το.
+            (Την πρώτη φορά το Android θα ζητήσει άδεια για «εγκατάσταση από άγνωστες πηγές».)
+          files: out/*.apk
